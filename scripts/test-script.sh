@@ -2,7 +2,6 @@
 
 set -e
 
-variant=${1:-${VARIANT}}
 service=${2:-${SERVICE_NAME}}
 port=${3:-${PORT_NUMBER}}
 
@@ -25,9 +24,9 @@ success() {
   newman run \
     --delay-request=100 \
     --folder=success \
-    --export-environment "$variant"/postman/environment.json \
-    --environment "$variant"/postman/environment.json \
-    "$variant"/postman/collection.json
+    --export-environment postman/environment.json \
+    --environment postman/environment.json \
+    postman/collection.json
 }
 
 step() {
@@ -44,9 +43,9 @@ step() {
   newman run \
     --delay-request=100 \
     --folder=step"$step" \
-    --export-environment "$variant"/postman/environment.json \
-    --environment "$variant"/postman/environment.json \
-    "$variant"/postman/collection.json
+    --export-environment postman/environment.json \
+    --environment postman/environment.json \
+    postman/collection.json
 
   printf "=== Step %d completed ===\n" "$step"
 }

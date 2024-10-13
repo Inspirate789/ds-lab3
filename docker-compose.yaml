@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    restart: on-failure
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: postgres
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./migrations/common/:/docker-entrypoint-initdb.d/
+    ports:
+      - "5432:5432"
+  gateway:
+    container_name: gateway
+    build:
+      context: .
+      args:
+        MAIN_PATH: ./cmd/gateway/main.go
+        CONFIG_PATH: ./configs/gateway.yaml
+        PIPELINE_ID: ${PIPELINE_ID}
+      platforms:
+        - "linux/amd64"
+    image: inspirate789/ds-gateway:latest
+    restart: always
+    ports:
+      - "8080:8080"
+  cars-api:
+    container_name: cars-api
+    build:
+      context: .
+      args:
+        MAIN_PATH: ./cmd/car/main.go
+        CONFIG_PATH: ./configs/cars.yaml
+        MIGRATIONS_FOLDER: ./migrations/car
+        PIPELINE_ID: ${PIPELINE_ID}
+      platforms:
+        - "linux/amd64"
+    image: inspirate789/ds-cars-api:latest
+    restart: always
+    ports:
+      - "8070:8080"
+  rental-api:
+    container_name: rental-api
+    build:
+      context: .
+      args:
+        MAIN_PATH: ./cmd/rental/main.go
+        CONFIG_PATH: ./configs/rental.yaml
+        MIGRATIONS_FOLDER: ./migrations/rental
+        PIPELINE_ID: ${PIPELINE_ID}
+      platforms:
+        - "linux/amd64"
+    image: inspirate789/ds-rental-api:latest
+    restart: always
+    ports:
+      - "8060:8080"
+  payment-api:
+    container_name: payment-api
+    build:
+      context: .
+      args:
+        MAIN_PATH: ./cmd/payment/main.go
+        CONFIG_PATH: ./configs/payment.yaml
+        MIGRATIONS_FOLDER: ./migrations/payment
+        PIPELINE_ID: ${PIPELINE_ID}
+      platforms:
+        - "linux/amd64"
+    image: inspirate789/ds-payment-api:latest
+    restart: always
+    ports:
+      - "8050:8080"
+
+volumes:
+  db-data:

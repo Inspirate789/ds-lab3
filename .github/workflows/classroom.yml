@@ -8,54 +8,228 @@ on:
       - master
 jobs:
   build:
-    name: Autograding
+    name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Golang
+        uses: actions/setup-go@v5
         with:
-          fetch-depth: 0
+          go-version: '1.23.1'
 
-      - uses: docker/setup-buildx-action@v2
+      - name: Install app dependencies
+        run: go mod tidy
 
-      # TODO build and run unit tests
+      - name: Build gateway
+        run: go build -v ./cmd/gateway/main.go
 
-      - name: Build images
-        timeout-minutes: 10
-        run: docker compose build
+      - name: Build cars service
+        run: go build -v ./cmd/car/main.go
 
-      - name: Run containers
-        timeout-minutes: 5
-        run: |
-          docker compose up -d
-          ./scripts/wait-script.sh
-        env:
-          WAIT_PORTS: 8080,8070,8060,8050
+      - name: Build rental service
+        run: go build -v ./cmd/car/main.go
 
-      # TODO setup variant, service and port
+      - name: Build payment service
+        run: go build -v ./cmd/car/main.go
 
-      - name: Run API Tests
-        timeout-minutes: 5
-        run: ./scripts/test-script.sh
-        env:
-          VARIANT: <variant>
-          SERVICE_NAME: <your service name>
-          PORT_NUMBER: <port number>
+  test:
+    name: Test
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: education/autograding@v1
-        id: autograder
-        continue-on-error: true
-
-      - name: Github auto grader mark
-        uses: Romanow/google-sheet-autograder-marker@v1.0
+      - name: Lint app
+        uses: golangci/golangci-lint-action@v6
         with:
-          google_token: ${{secrets.GOOGLE_API_KEY}}
-          sheet_id: "1xkgjUX6Qmk7rdJG-QPOToav-HWWtthJjnShIKnw3oIY"
-          homework_number: 3
-          user_column: 'D'
-          column_offset: 'F'
-          mark: "'+"
+          version: v1.60
 
-      - name: Stop containers
+      - name: Run unit tests for gateway
+        run: ALLURE_OUTPUT_PATH=../../ go test -v ./internal/gateway
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: allure-results
+
+  publish_test_report:
+    needs: [ test ]
+    name: Publish test report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download current test reports
+        uses: actions/download-artifact@v4
+        with:
+          name: test-reports
+          path: allure-results
+
+      - name: Load test report history
+        uses: actions/checkout@v3
         if: always()
         continue-on-error: true
-        run: docker compose down -v
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Build test report
+        uses: simple-elf/allure-report-action@v1.7
+        if: always()
+        with:
+          gh_pages: gh-pages
+          allure_history: allure-history
+          allure_results: allure-results
+          keep_reports: 50
+
+      - name: Publish test report
+        uses: peaceiris/actions-gh-pages@v3
+        if: always()
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: allure-history
+
+  delivery:
+    name: Build Docker images
+    needs: [ test ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for Docker build
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push images
+        timeout-minutes: 10
+        run: PIPELINE_ID=${{ github.run_number }} docker compose build --push
+
+  deploy:
+    name: Deploy
+    needs: [ delivery ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy docker-compose.yaml to test server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PROD_SSH_PASSPHRASE }}
+          source: "docker-compose.yaml,migrations,scripts"
+          target: /home/${{ secrets.PROD_USERNAME }}
+
+      - name: Start app
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          PROD_USERNAME: ${{ secrets.PROD_USERNAME }}
+          WAIT_PORTS: 8080,8070,8060,8050
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PROD_SSH_PASSPHRASE }}
+          envs: PROD_USERNAME, WAIT_PORTS
+          allenvs: true
+          script: >-
+            cd /home/$PROD_USERNAME &&
+            docker compose pull &&
+            docker compose up -d &&
+            ./scripts/wait-script.sh
+
+  api_test:
+    needs: [ deploy ]
+    name: API test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add app URL to Postman environment
+        uses: sergeysova/jq-action@v2
+        id: version
+        with:
+          cmd: >-
+            jq '.values[0].value = "http://${{ secrets.PROD_HOST }}:${{ secrets.PROD_PORT }}"'
+            < postman/environment.json > out.tmp &&
+            mv out.tmp postman/environment.json
+
+#      - name: Run API Tests
+#        timeout-minutes: 5
+#        run: ./scripts/test-script.sh
+#        env:
+#          SERVICE_NAME: <your service name>
+#          PORT_NUMBER: <port number>
+
+  autograding:
+    name: Autograding
+    needs: [ api_test ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add app URL to Postman environment
+        uses: sergeysova/jq-action@v2
+        id: version
+        with:
+          cmd: >-
+            jq '.values[0].value = "http://${{ secrets.PROD_HOST }}:${{ secrets.PROD_PORT }}"'
+            < postman/environment.json > out.tmp &&
+            mv out.tmp postman/environment.json
+
+      - name: Autograding
+        uses: education/autograding@v1
+        continue-on-error: true
+
+  #      - name: Github auto grader mark
+  #        uses: Romanow/google-sheet-autograder-marker@v1.0
+  #        with:
+  #          google_token: ${{secrets.GOOGLE_API_KEY}}
+  #          sheet_id: "1xkgjUX6Qmk7rdJG-QPOToav-HWWtthJjnShIKnw3oIY"
+  #          homework_number: 2
+  #          user_column: 'D'
+  #          column_offset: 'F'
+  #          mark: "'+"
+
+  shutdown:
+    name: Shutdown test environment
+    needs: autograding
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start app
+        uses: appleboy/ssh-action@v1.0.3
+        continue-on-error: true
+        env:
+          PROD_USERNAME: ${{ secrets.PROD_USERNAME }}
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME }}
+          key: ${{ secrets.PROD_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PROD_SSH_PASSPHRASE }}
+          envs: PROD_USERNAME
+          allenvs: true
+          script: >-
+            cd /home/$PROD_USERNAME &&
+            docker compose down --volumes

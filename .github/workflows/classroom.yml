@@ -176,8 +176,8 @@ jobs:
         timeout-minutes: 5
         run: ./scripts/test-script.sh
         env:
-          SERVICE_NAME: <your service name>
-          PORT_NUMBER: <port number>
+          SERVICE_NAME: payment-api
+          PORT_NUMBER: 8050
 
   autograding:
     name: Autograding

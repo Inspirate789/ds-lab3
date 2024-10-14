@@ -172,12 +172,12 @@ jobs:
             < postman/environment.json > out.tmp &&
             mv out.tmp postman/environment.json
 
-#      - name: Run API Tests
-#        timeout-minutes: 5
-#        run: ./scripts/test-script.sh
-#        env:
-#          SERVICE_NAME: <your service name>
-#          PORT_NUMBER: <port number>
+      - name: Run API Tests
+        timeout-minutes: 5
+        run: ./scripts/test-script.sh
+        env:
+          SERVICE_NAME: <your service name>
+          PORT_NUMBER: <port number>
 
   autograding:
     name: Autograding

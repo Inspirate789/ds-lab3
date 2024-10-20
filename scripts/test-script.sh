@@ -2,8 +2,8 @@
 
 set -e
 
-service=${2:-${SERVICE_NAME}}
-port=${3:-${PORT_NUMBER}}
+service=${1:-${SERVICE_NAME}}
+port=${2:-${PORT_NUMBER}}
 
 path=$(dirname "$0")
 

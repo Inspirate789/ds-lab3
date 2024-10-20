@@ -22,6 +22,7 @@ services:
         PIPELINE_ID: ${PIPELINE_ID}
       platforms:
         - "linux/amd64"
+        - "linux/arm64"
     image: inspirate789/ds-gateway:latest
     restart: always
     ports:
@@ -37,6 +38,7 @@ services:
         PIPELINE_ID: ${PIPELINE_ID}
       platforms:
         - "linux/amd64"
+        - "linux/arm64"
     image: inspirate789/ds-cars-api:latest
     restart: always
     ports:
@@ -52,6 +54,7 @@ services:
         PIPELINE_ID: ${PIPELINE_ID}
       platforms:
         - "linux/amd64"
+        - "linux/arm64"
     image: inspirate789/ds-rental-api:latest
     restart: always
     ports:
@@ -67,6 +70,7 @@ services:
         PIPELINE_ID: ${PIPELINE_ID}
       platforms:
         - "linux/amd64"
+        - "linux/arm64"
     image: inspirate789/ds-payment-api:latest
     restart: always
     ports:

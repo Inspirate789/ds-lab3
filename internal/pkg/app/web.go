@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	slogfiber "github.com/samber/slog-fiber"
 	"log/slog"
+	"net"
 	"net/http"
 )
 
@@ -52,6 +53,12 @@ func NewFiberApp(config WebConfig, delivery Delivery, logger *slog.Logger) *Fibe
 		DisableStartupMessage: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			logger.Error(err.Error())
+
+			var DNSError *net.DNSError
+			if errors.As(err, &DNSError) {
+				return ctx.Status(fiber.StatusServiceUnavailable).JSON(newFiberError(err.Error()))
+			}
+
 			return ctx.Status(fiber.StatusInternalServerError).JSON(newFiberError(err.Error()))
 		},
 	})

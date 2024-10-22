@@ -8,26 +8,65 @@ import (
 	"fmt"
 	"github.com/Inspirate789/ds-lab2/internal/models"
 	"github.com/Inspirate789/ds-lab2/internal/rental/delivery"
+	"github.com/sony/gobreaker/v2"
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 type Client interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-type RentalsAPI struct {
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
+type rentals struct {
+	items      []models.Rental
+	totalCount uint64
 }
 
-func New(baseURL string, client *http.Client, logger *slog.Logger) *RentalsAPI {
+type rental struct {
+	item      models.Rental
+	found     bool
+	permitted bool
+}
+
+type RentalsAPI struct {
+	baseURL   string
+	client    *http.Client
+	rentalsCB *gobreaker.CircuitBreaker[rentals]
+	rentalCB  *gobreaker.CircuitBreaker[rental]
+	logger    *slog.Logger
+}
+
+func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger) *RentalsAPI {
+	logCB := func(name string, from gobreaker.State, to gobreaker.State) {
+		logger.Debug("change circuit breaker state",
+			slog.String("name", name),
+			slog.String("from", from.String()),
+			slog.String("to", to.String()),
+		)
+	}
+
+	rentalsCB := gobreaker.NewCircuitBreaker[rentals](gobreaker.Settings{
+		Name:          "get_rentals",
+		MaxRequests:   uint32(maxFails),
+		Timeout:       time.Second,
+		OnStateChange: logCB,
+	})
+
+	rentalCB := gobreaker.NewCircuitBreaker[rental](gobreaker.Settings{
+		Name:          "get_rental",
+		MaxRequests:   uint32(maxFails),
+		Timeout:       time.Second,
+		OnStateChange: logCB,
+	})
+
 	return &RentalsAPI{
-		baseURL: baseURL,
-		client:  client,
-		logger:  logger,
+		baseURL:   baseURL,
+		client:    client,
+		rentalsCB: rentalsCB,
+		rentalCB:  rentalCB,
+		logger:    logger,
 	}
 }
 
@@ -39,7 +78,7 @@ func (api *RentalsAPI) HealthCheck(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -58,7 +97,7 @@ func (api *RentalsAPI) HealthCheck(ctx context.Context) error {
 
 }
 
-func (api *RentalsAPI) GetUserRentals(ctx context.Context, username string, offset, limit uint64) ([]models.Rental, uint64, error) {
+func (api *RentalsAPI) getUserRentals(ctx context.Context, username string, offset, limit uint64) ([]models.Rental, uint64, error) {
 	endpoint := api.baseURL + fmt.Sprintf("/api/v1/rentals?offset=%d&limit=%d", offset, limit)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -68,7 +107,7 @@ func (api *RentalsAPI) GetUserRentals(ctx context.Context, username string, offs
 
 	req.Header.Set("X-User-Name", username)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -98,7 +137,26 @@ func (api *RentalsAPI) GetUserRentals(ctx context.Context, username string, offs
 	return model, rentals.Count, nil
 }
 
-func (api *RentalsAPI) GetUserRental(ctx context.Context, rentalUID, username string) (res models.Rental, found, permitted bool, err error) {
+func (api *RentalsAPI) GetUserRentals(ctx context.Context, username string, offset, limit uint64) ([]models.Rental, uint64, error) {
+	res, err := api.rentalsCB.Execute(func() (rentals, error) {
+		items, totalCount, err := api.getUserRentals(ctx, username, offset, limit)
+		return rentals{
+			items:      items,
+			totalCount: totalCount,
+		}, err
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			return make([]models.Rental, 0), 0, nil
+		}
+
+		return nil, 0, err
+	}
+
+	return res.items, res.totalCount, nil
+}
+
+func (api *RentalsAPI) getUserRental(ctx context.Context, rentalUID, username string) (res models.Rental, found, permitted bool, err error) {
 	endpoint := api.baseURL + "/api/v1/rentals/" + rentalUID
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -108,7 +166,7 @@ func (api *RentalsAPI) GetUserRental(ctx context.Context, rentalUID, username st
 
 	req.Header.Set("X-User-Name", username)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return models.Rental{}, false, false, err
 	}
@@ -142,6 +200,29 @@ func (api *RentalsAPI) GetUserRental(ctx context.Context, rentalUID, username st
 	return model, true, true, nil
 }
 
+func (api *RentalsAPI) GetUserRental(ctx context.Context, rentalUID, username string) (models.Rental, bool, bool, error) {
+	res, err := api.rentalCB.Execute(func() (rental, error) {
+		item, found, permitted, err := api.getUserRental(ctx, rentalUID, username)
+		return rental{
+			item:      item,
+			found:     found,
+			permitted: permitted,
+		}, err
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			return models.Rental{
+				RentalUID:        rentalUID,
+				RentalProperties: models.RentalProperties{Username: username},
+			}, true, false, nil
+		}
+
+		return models.Rental{}, false, false, err
+	}
+
+	return res.item, res.found, res.permitted, nil
+}
+
 func (api *RentalsAPI) CreateRental(ctx context.Context, properties models.RentalProperties) (models.Rental, error) {
 	endpoint := api.baseURL + "/api/v1/rentals"
 	dto := delivery.NewRentalPropertiesDTO(properties)
@@ -158,7 +239,7 @@ func (api *RentalsAPI) CreateRental(ctx context.Context, properties models.Renta
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return models.Rental{}, err
 	}
@@ -196,7 +277,7 @@ func (api *RentalsAPI) SetRentalStatus(ctx context.Context, rentalUID string, st
 		return false, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return false, err
 	}

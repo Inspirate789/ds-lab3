@@ -7,3 +7,4 @@ web:
 carsApiAddr: http://cars-api:8080
 rentalApiAddr: http://rental-api:8080
 paymentApiAddr: http://payment-api:8080
+maxRequestFails: 10

@@ -7,25 +7,63 @@ import (
 	"fmt"
 	"github.com/Inspirate789/ds-lab2/internal/car/delivery"
 	"github.com/Inspirate789/ds-lab2/internal/models"
+	"github.com/sony/gobreaker/v2"
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 type Client interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+type cars struct {
+	items      []models.Car
+	totalCount uint64
+}
+
+type car struct {
+	item  models.Car
+	found bool
+}
+
 type CarsAPI struct {
 	baseURL string
 	client  *http.Client
+	carsCB  *gobreaker.CircuitBreaker[cars]
+	carCB   *gobreaker.CircuitBreaker[car]
 	logger  *slog.Logger
 }
 
-func New(baseURL string, client *http.Client, logger *slog.Logger) *CarsAPI {
+func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger) *CarsAPI {
+	logCB := func(name string, from gobreaker.State, to gobreaker.State) {
+		logger.Debug("change circuit breaker state",
+			slog.String("name", name),
+			slog.String("from", from.String()),
+			slog.String("to", to.String()),
+		)
+	}
+
+	carsCB := gobreaker.NewCircuitBreaker[cars](gobreaker.Settings{
+		Name:          "get_cars",
+		MaxRequests:   uint32(maxFails),
+		Timeout:       time.Second,
+		OnStateChange: logCB,
+	})
+
+	carCB := gobreaker.NewCircuitBreaker[car](gobreaker.Settings{
+		Name:          "get_car",
+		MaxRequests:   uint32(maxFails),
+		Timeout:       time.Second,
+		OnStateChange: logCB,
+	})
+
 	return &CarsAPI{
 		baseURL: baseURL,
 		client:  client,
+		carsCB:  carsCB,
+		carCB:   carCB,
 		logger:  logger,
 	}
 }
@@ -38,7 +76,7 @@ func (api *CarsAPI) HealthCheck(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -57,7 +95,7 @@ func (api *CarsAPI) HealthCheck(ctx context.Context) error {
 
 }
 
-func (api *CarsAPI) GetCars(ctx context.Context, offset, limit uint64, showAll bool) (res []models.Car, totalCount uint64, err error) {
+func (api *CarsAPI) getCars(ctx context.Context, offset, limit uint64, showAll bool) (res []models.Car, totalCount uint64, err error) {
 	endpoint := api.baseURL + fmt.Sprintf("/api/v1/cars?offset=%d&limit=%d&showAll=%v", offset, limit, showAll)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -65,7 +103,7 @@ func (api *CarsAPI) GetCars(ctx context.Context, offset, limit uint64, showAll b
 		return nil, 0, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -90,7 +128,26 @@ func (api *CarsAPI) GetCars(ctx context.Context, offset, limit uint64, showAll b
 	return cars.ToModel(), cars.Count, nil
 }
 
-func (api *CarsAPI) GetCar(ctx context.Context, carUID string) (res models.Car, found bool, err error) {
+func (api *CarsAPI) GetCars(ctx context.Context, offset, limit uint64, showAll bool) ([]models.Car, uint64, error) {
+	res, err := api.carsCB.Execute(func() (cars, error) {
+		items, totalCount, err := api.getCars(ctx, offset, limit, showAll)
+		return cars{
+			items:      items,
+			totalCount: totalCount,
+		}, err
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			return make([]models.Car, 0), 0, nil
+		}
+
+		return nil, 0, err
+	}
+
+	return res.items, res.totalCount, nil
+}
+
+func (api *CarsAPI) getCar(ctx context.Context, carUID string) (res models.Car, found bool, err error) {
 	endpoint := api.baseURL + "/api/v1/cars/" + carUID
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -98,7 +155,7 @@ func (api *CarsAPI) GetCar(ctx context.Context, carUID string) (res models.Car, 
 		return models.Car{}, false, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return models.Car{}, false, err
 	}
@@ -125,6 +182,25 @@ func (api *CarsAPI) GetCar(ctx context.Context, carUID string) (res models.Car, 
 	return car.ToModel(), true, nil
 }
 
+func (api *CarsAPI) GetCar(ctx context.Context, carUID string) (models.Car, bool, error) {
+	res, err := api.carCB.Execute(func() (car, error) {
+		item, found, err := api.getCar(ctx, carUID)
+		return car{
+			item:  item,
+			found: found,
+		}, err
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			return models.Car{CarUID: carUID}, true, nil
+		}
+
+		return models.Car{}, false, err
+	}
+
+	return res.item, res.found, nil
+}
+
 func (api *CarsAPI) LockCar(ctx context.Context, carUID string) (res models.Car, found, success bool, err error) {
 	endpoint := api.baseURL + "/api/v1/cars/" + carUID + "/lock"
 
@@ -133,7 +209,7 @@ func (api *CarsAPI) LockCar(ctx context.Context, carUID string) (res models.Car,
 		return models.Car{}, false, false, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return models.Car{}, false, false, err
 	}
@@ -170,7 +246,7 @@ func (api *CarsAPI) UnlockCar(ctx context.Context, carUID string) (err error) {
 		return err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return err
 	}

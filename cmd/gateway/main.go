@@ -65,9 +65,9 @@ func main() {
 	logger := slog.New(tint.NewHandler(os.Stdout, &tint.Options{Level: slog.Level(config.Logging.Level)}))
 
 	delivery := gateway.New(
-		carAPI.New(config.CarsApiAddr, http.DefaultClient, logger),
-		rentalAPI.New(config.RentalApiAddr, http.DefaultClient, logger),
-		paymentAPI.New(config.PaymentApiAddr, http.DefaultClient, logger),
+		carAPI.New(config.CarsApiAddr, http.DefaultClient, config.MaxRequestFails, logger),
+		rentalAPI.New(config.RentalApiAddr, http.DefaultClient, config.MaxRequestFails, logger),
+		paymentAPI.New(config.PaymentApiAddr, http.DefaultClient, config.MaxRequestFails, logger),
 		logger,
 	)
 	webApp := app.NewFiberApp(config.Web, delivery, logger)

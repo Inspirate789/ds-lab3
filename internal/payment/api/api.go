@@ -8,27 +8,49 @@ import (
 	"fmt"
 	"github.com/Inspirate789/ds-lab2/internal/models"
 	"github.com/Inspirate789/ds-lab2/internal/payment/delivery"
+	"github.com/sony/gobreaker/v2"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type Client interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-type PaymentsAPI struct {
-	baseURL string
-	client  *http.Client
-	logger  *slog.Logger
+type payment struct {
+	item  models.Payment
+	found bool
 }
 
-func New(baseURL string, client *http.Client, logger *slog.Logger) *PaymentsAPI {
+type PaymentsAPI struct {
+	baseURL   string
+	client    *http.Client
+	paymentCB *gobreaker.CircuitBreaker[payment]
+	logger    *slog.Logger
+}
+
+func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger) *PaymentsAPI {
+	paymentCB := gobreaker.NewCircuitBreaker[payment](gobreaker.Settings{
+		Name:        "get_payment",
+		MaxRequests: uint32(maxFails),
+		Timeout:     time.Second,
+		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+			logger.Debug("change circuit breaker state",
+				slog.String("name", name),
+				slog.String("from", from.String()),
+				slog.String("to", to.String()),
+			)
+		},
+	})
+
 	return &PaymentsAPI{
-		baseURL: baseURL,
-		client:  client,
-		logger:  logger,
+		baseURL:   baseURL,
+		client:    client,
+		paymentCB: paymentCB,
+		logger:    logger,
 	}
 }
 
@@ -40,7 +62,7 @@ func (api *PaymentsAPI) HealthCheck(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -67,7 +89,7 @@ func (api *PaymentsAPI) CreatePayment(ctx context.Context, price uint64) (res mo
 		return models.Payment{}, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return models.Payment{}, err
 	}
@@ -100,7 +122,7 @@ func (api *PaymentsAPI) SetPaymentStatus(ctx context.Context, paymentUID string,
 		return false, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return false, err
 	}
@@ -120,7 +142,7 @@ func (api *PaymentsAPI) SetPaymentStatus(ctx context.Context, paymentUID string,
 	return true, nil
 }
 
-func (api *PaymentsAPI) GetPayment(ctx context.Context, paymentUID string) (res models.Payment, found bool, err error) {
+func (api *PaymentsAPI) getPayment(ctx context.Context, paymentUID string) (res models.Payment, found bool, err error) {
 	endpoint := api.baseURL + "/api/v1/payments/" + paymentUID
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -128,7 +150,7 @@ func (api *PaymentsAPI) GetPayment(ctx context.Context, paymentUID string) (res 
 		return models.Payment{}, false, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := api.client.Do(req)
 	if err != nil {
 		return models.Payment{}, false, err
 	}
@@ -153,4 +175,23 @@ func (api *PaymentsAPI) GetPayment(ctx context.Context, paymentUID string) (res 
 	}
 
 	return payment.ToModel(), true, nil
+}
+
+func (api *PaymentsAPI) GetPayment(ctx context.Context, paymentUID string) (models.Payment, bool, error) {
+	res, err := api.paymentCB.Execute(func() (payment, error) {
+		item, found, err := api.getPayment(ctx, paymentUID)
+		return payment{
+			item:  item,
+			found: found,
+		}, err
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			return models.Payment{PaymentUID: paymentUID}, true, nil
+		}
+
+		return models.Payment{}, false, err
+	}
+
+	return res.item, res.found, nil
 }

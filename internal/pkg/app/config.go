@@ -15,9 +15,10 @@ type Config struct {
 		DriverName       string
 		ConnectionString string
 	}
-	CarsApiAddr    string
-	RentalApiAddr  string
-	PaymentApiAddr string
+	CarsApiAddr     string
+	RentalApiAddr   string
+	PaymentApiAddr  string
+	MaxRequestFails uint
 }
 
 func ReadLocalConfig(configPath string) (Config, error) {

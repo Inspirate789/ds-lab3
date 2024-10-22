@@ -15,6 +15,7 @@ require (
 	github.com/ozontech/allure-go/pkg/framework v0.6.32
 	github.com/pkg/errors v0.9.1
 	github.com/samber/slog-fiber v1.16.4
+	github.com/sony/gobreaker/v2 v2.0.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/multierr v1.11.0

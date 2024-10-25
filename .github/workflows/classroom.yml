@@ -130,16 +130,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Add app URL to Postman environment
-        uses: sergeysova/jq-action@v2
-        id: version
-        with:
-          cmd: >-
-            jq '.values[0].value = "http://${{ secrets.PROD_HOST }}:${{ secrets.PROD_PORT }}"'
-            < postman/environment.json > out.tmp &&
-            mv out.tmp postman/environment.json &&
-            chmod 777 postman/environment.json
-
       - name: Run API Tests
         timeout-minutes: 5
         run: ./scripts/test-script.sh
@@ -154,15 +144,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Add app URL to Postman environment
-        uses: sergeysova/jq-action@v2
-        id: version
-        with:
-          cmd: >-
-            jq '.values[0].value = "http://${{ secrets.PROD_HOST }}:${{ secrets.PROD_PORT }}"'
-            < postman/environment.json > out.tmp &&
-            mv out.tmp postman/environment.json
 
       - name: Autograding
         uses: education/autograding@v1

@@ -170,7 +170,8 @@ jobs:
           cmd: >-
             jq '.values[0].value = "http://${{ secrets.PROD_HOST }}:${{ secrets.PROD_PORT }}"'
             < postman/environment.json > out.tmp &&
-            mv out.tmp postman/environment.json
+            mv out.tmp postman/environment.json &&
+            chmod 777 postman/environment.json
 
       - name: Run API Tests
         timeout-minutes: 5

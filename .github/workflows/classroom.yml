@@ -142,6 +142,16 @@ jobs:
   #          column_offset: 'F'
   #          mark: "'+"
 
+      - name: Cat containers logs
+        if: always()
+        timeout-minutes: 10
+        run: |
+          docker logs gateway 
+          docker logs retryer 
+          docker logs cars-api 
+          docker logs rental-api 
+          docker logs payment-api
+
       - name: Shutdown test environment
         if: always()
         timeout-minutes: 10

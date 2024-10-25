@@ -4,19 +4,29 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/Inspirate789/ds-lab2/internal/models"
+	"github.com/Inspirate789/ds-lab2/internal/pkg/app"
 	"github.com/Inspirate789/ds-lab2/internal/rental/delivery"
+	"github.com/pkg/errors"
 	"github.com/sony/gobreaker/v2"
+	"go.uber.org/multierr"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
 
+const ErrServiceUnavailable = "Rental Service unavailable"
+
 type Client interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+type RequestBacklog interface {
+	app.HealthChecker
+	Push(ctx context.Context, req *http.Request) error
 }
 
 type rentals struct {
@@ -33,12 +43,13 @@ type rental struct {
 type RentalsAPI struct {
 	baseURL   string
 	client    *http.Client
+	backlog   RequestBacklog
 	rentalsCB *gobreaker.CircuitBreaker[rentals]
 	rentalCB  *gobreaker.CircuitBreaker[rental]
 	logger    *slog.Logger
 }
 
-func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger) *RentalsAPI {
+func New(baseURL string, client *http.Client, backlog RequestBacklog, maxFails uint, logger *slog.Logger) *RentalsAPI {
 	logCB := func(name string, from gobreaker.State, to gobreaker.State) {
 		logger.Debug("change circuit breaker state",
 			slog.String("name", name),
@@ -64,13 +75,18 @@ func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger
 	return &RentalsAPI{
 		baseURL:   baseURL,
 		client:    client,
+		backlog:   backlog,
 		rentalsCB: rentalsCB,
 		rentalCB:  rentalCB,
 		logger:    logger,
 	}
 }
 
-func (api *RentalsAPI) HealthCheck(ctx context.Context) error {
+func (api *RentalsAPI) HealthCheck(ctx context.Context) (err error) {
+	defer func() {
+		err = multierr.Append(err, api.backlog.HealthCheck(ctx))
+	}()
+
 	endpoint := api.baseURL + "/manage/health"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -80,6 +96,11 @@ func (api *RentalsAPI) HealthCheck(ctx context.Context) error {
 
 	resp, err := api.client.Do(req)
 	if err != nil {
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
 		return err
 	}
 	defer resp.Body.Close()
@@ -109,6 +130,11 @@ func (api *RentalsAPI) getUserRentals(ctx context.Context, username string, offs
 
 	resp, err := api.client.Do(req)
 	if err != nil {
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
@@ -146,11 +172,8 @@ func (api *RentalsAPI) GetUserRentals(ctx context.Context, username string, offs
 		}, err
 	})
 	if err != nil {
-		if errors.Is(err, gobreaker.ErrOpenState) {
-			return make([]models.Rental, 0), 0, nil
-		}
-
-		return nil, 0, err
+		api.logger.Warn(err.Error())
+		return make([]models.Rental, 0), 0, nil
 	}
 
 	return res.items, res.totalCount, nil
@@ -168,6 +191,11 @@ func (api *RentalsAPI) getUserRental(ctx context.Context, rentalUID, username st
 
 	resp, err := api.client.Do(req)
 	if err != nil {
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
 		return models.Rental{}, false, false, err
 	}
 	defer resp.Body.Close()
@@ -210,14 +238,11 @@ func (api *RentalsAPI) GetUserRental(ctx context.Context, rentalUID, username st
 		}, err
 	})
 	if err != nil {
-		if errors.Is(err, gobreaker.ErrOpenState) {
-			return models.Rental{
-				RentalUID:        rentalUID,
-				RentalProperties: models.RentalProperties{Username: username},
-			}, true, false, nil
-		}
-
-		return models.Rental{}, false, false, err
+		api.logger.Warn(err.Error())
+		return models.Rental{
+			RentalUID:        rentalUID,
+			RentalProperties: models.RentalProperties{Username: username},
+		}, true, false, nil
 	}
 
 	return res.item, res.found, res.permitted, nil
@@ -241,7 +266,12 @@ func (api *RentalsAPI) CreateRental(ctx context.Context, properties models.Renta
 
 	resp, err := api.client.Do(req)
 	if err != nil {
-		return models.Rental{}, err
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
+		return models.Rental{}, multierr.Combine(err, api.backlog.Push(ctx, req))
 	}
 	defer resp.Body.Close()
 
@@ -279,7 +309,12 @@ func (api *RentalsAPI) SetRentalStatus(ctx context.Context, rentalUID string, st
 
 	resp, err := api.client.Do(req)
 	if err != nil {
-		return false, err
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
+		return false, multierr.Combine(err, api.backlog.Push(ctx, req))
 	}
 	defer resp.Body.Close()
 

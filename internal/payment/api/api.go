@@ -4,20 +4,30 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/Inspirate789/ds-lab2/internal/models"
 	"github.com/Inspirate789/ds-lab2/internal/payment/delivery"
+	"github.com/Inspirate789/ds-lab2/internal/pkg/app"
+	"github.com/pkg/errors"
 	"github.com/sony/gobreaker/v2"
+	"go.uber.org/multierr"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
 )
 
+const ErrServiceUnavailable = "Payment Service unavailable"
+
 type Client interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+type RequestBacklog interface {
+	app.HealthChecker
+	Push(ctx context.Context, req *http.Request) error
 }
 
 type payment struct {
@@ -28,11 +38,12 @@ type payment struct {
 type PaymentsAPI struct {
 	baseURL   string
 	client    *http.Client
+	backlog   RequestBacklog
 	paymentCB *gobreaker.CircuitBreaker[payment]
 	logger    *slog.Logger
 }
 
-func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger) *PaymentsAPI {
+func New(baseURL string, client *http.Client, backlog RequestBacklog, maxFails uint, logger *slog.Logger) *PaymentsAPI {
 	paymentCB := gobreaker.NewCircuitBreaker[payment](gobreaker.Settings{
 		Name:        "get_payment",
 		MaxRequests: uint32(maxFails),
@@ -49,12 +60,17 @@ func New(baseURL string, client *http.Client, maxFails uint, logger *slog.Logger
 	return &PaymentsAPI{
 		baseURL:   baseURL,
 		client:    client,
+		backlog:   backlog,
 		paymentCB: paymentCB,
 		logger:    logger,
 	}
 }
 
-func (api *PaymentsAPI) HealthCheck(ctx context.Context) error {
+func (api *PaymentsAPI) HealthCheck(ctx context.Context) (err error) {
+	defer func() {
+		err = multierr.Append(err, api.backlog.HealthCheck(ctx))
+	}()
+
 	endpoint := api.baseURL + "/manage/health"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -64,6 +80,11 @@ func (api *PaymentsAPI) HealthCheck(ctx context.Context) error {
 
 	resp, err := api.client.Do(req)
 	if err != nil {
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
 		return err
 	}
 	defer resp.Body.Close()
@@ -91,7 +112,12 @@ func (api *PaymentsAPI) CreatePayment(ctx context.Context, price uint64) (res mo
 
 	resp, err := api.client.Do(req)
 	if err != nil {
-		return models.Payment{}, err
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
+		return models.Payment{}, multierr.Combine(err, api.backlog.Push(ctx, req))
 	}
 	defer resp.Body.Close()
 
@@ -124,7 +150,12 @@ func (api *PaymentsAPI) SetPaymentStatus(ctx context.Context, paymentUID string,
 
 	resp, err := api.client.Do(req)
 	if err != nil {
-		return false, err
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = nil
+		}
+
+		return true, multierr.Combine(err, api.backlog.Push(ctx, req))
 	}
 	defer resp.Body.Close()
 
@@ -152,6 +183,11 @@ func (api *PaymentsAPI) getPayment(ctx context.Context, paymentUID string) (res 
 
 	resp, err := api.client.Do(req)
 	if err != nil {
+		var DNSError *net.DNSError
+		if errors.As(err, &DNSError) {
+			err = errors.Wrap(err, ErrServiceUnavailable)
+		}
+
 		return models.Payment{}, false, err
 	}
 	defer resp.Body.Close()
@@ -186,11 +222,8 @@ func (api *PaymentsAPI) GetPayment(ctx context.Context, paymentUID string) (mode
 		}, err
 	})
 	if err != nil {
-		if errors.Is(err, gobreaker.ErrOpenState) {
-			return models.Payment{PaymentUID: paymentUID}, true, nil
-		}
-
-		return models.Payment{}, false, err
+		api.logger.Warn(err.Error())
+		return models.Payment{}, true, nil
 	}
 
 	return res.item, res.found, nil

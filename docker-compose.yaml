@@ -12,6 +12,34 @@ services:
       - ./migrations/common/:/docker-entrypoint-initdb.d/
     ports:
       - "5432:5432"
+  kafka:
+    image: docker.io/bitnami/kafka:3.8
+    container_name: kafka
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+    volumes:
+      - kafka-data:/bitnami
+    ports:
+      - "9092:9092"
+  retryer:
+    container_name: retryer
+    build:
+      context: .
+      args:
+        MAIN_PATH: ./cmd/retryer/main.go
+        CONFIG_PATH: ./configs/retryer.yaml
+        PIPELINE_ID: ${PIPELINE_ID}
+        MODE: without_migrations
+    image: inspirate789/ds-retryer:latest
+    restart: always
   gateway:
     container_name: gateway
     build:
@@ -20,9 +48,7 @@ services:
         MAIN_PATH: ./cmd/gateway/main.go
         CONFIG_PATH: ./configs/gateway.yaml
         PIPELINE_ID: ${PIPELINE_ID}
-      platforms:
-        - "linux/amd64"
-        - "linux/arm64"
+        MODE: without_migrations
     image: inspirate789/ds-gateway:latest
     restart: always
     ports:
@@ -36,9 +62,6 @@ services:
         CONFIG_PATH: ./configs/cars.yaml
         MIGRATIONS_FOLDER: ./migrations/car
         PIPELINE_ID: ${PIPELINE_ID}
-      platforms:
-        - "linux/amd64"
-        - "linux/arm64"
     image: inspirate789/ds-cars-api:latest
     restart: always
     ports:
@@ -52,9 +75,6 @@ services:
         CONFIG_PATH: ./configs/rental.yaml
         MIGRATIONS_FOLDER: ./migrations/rental
         PIPELINE_ID: ${PIPELINE_ID}
-      platforms:
-        - "linux/amd64"
-        - "linux/arm64"
     image: inspirate789/ds-rental-api:latest
     restart: always
     ports:
@@ -68,9 +88,6 @@ services:
         CONFIG_PATH: ./configs/payment.yaml
         MIGRATIONS_FOLDER: ./migrations/payment
         PIPELINE_ID: ${PIPELINE_ID}
-      platforms:
-        - "linux/amd64"
-        - "linux/arm64"
     image: inspirate789/ds-payment-api:latest
     restart: always
     ports:
@@ -78,3 +95,4 @@ services:
 
 volumes:
   db-data:
+  kafka-data:

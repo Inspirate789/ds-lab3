@@ -15,6 +15,10 @@ type Config struct {
 		DriverName       string
 		ConnectionString string
 	}
+	Kafka struct {
+		Addresses []string
+		Topic     string
+	}
 	CarsApiAddr     string
 	RentalApiAddr   string
 	PaymentApiAddr  string

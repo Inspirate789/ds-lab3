@@ -1,3 +1,6 @@
+# Choose whether to use migrations
+ARG MODE=with_migrations
+
 FROM golang:1.23.1-bookworm AS build
 WORKDIR /build
 ENV CGO_ENABLED=0
@@ -17,18 +20,23 @@ RUN --mount=target=. \
     go build \
     -trimpath -ldflags "-s -w -extldflags '-static'" \
     -o /app $MAIN_PATH
+RUN chmod +x /app
 
-FROM scratch AS app
+FROM scratch AS stage_with_migrations
+ARG MIGRATIONS_FOLDER
+ONBUILD COPY $MIGRATIONS_FOLDER /migrations
+
+FROM scratch AS stage_without_migrations
+
+FROM stage_${MODE} AS app
 # Add label to image
 ARG PIPELINE_ID
 LABEL version="$PIPELINE_ID"
 # Copy the binary
 COPY --from=build /app /app
-# Get path to config and migrations
+# Get path to config
 ARG CONFIG_PATH
-ARG MIGRATIONS_FOLDER
 # Create environment
-COPY $MIGRATIONS_FOLDER /migrations
 COPY $CONFIG_PATH /app.yaml
 # Run the binary
 ENTRYPOINT ["/app", "--config=/app.yaml"]

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 )
 
 type HealthChecker interface {
@@ -53,13 +54,14 @@ func NewFiberApp(config WebConfig, delivery Delivery, logger *slog.Logger) *Fibe
 		DisableStartupMessage: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			logger.Error(err.Error())
+			msg := strings.SplitN(err.Error(), ":", 2)[0]
 
 			var DNSError *net.DNSError
 			if errors.As(err, &DNSError) {
-				return ctx.Status(fiber.StatusServiceUnavailable).JSON(newFiberError(err.Error()))
+				return ctx.Status(fiber.StatusServiceUnavailable).JSON(newFiberError(msg))
 			}
 
-			return ctx.Status(fiber.StatusInternalServerError).JSON(newFiberError(err.Error()))
+			return ctx.Status(fiber.StatusInternalServerError).JSON(newFiberError(msg))
 		},
 	})
 

@@ -12,18 +12,18 @@ type CarRentalRequest struct {
 }
 
 type CarRentalPayment struct {
-	PaymentUID string               `json:"paymentUid"`
-	Status     models.PaymentStatus `json:"status"`
-	Price      uint64               `json:"price"`
+	PaymentUID string               `json:"paymentUid,omitempty"`
+	Status     models.PaymentStatus `json:"status,omitempty"`
+	Price      uint64               `json:"price,omitempty"`
 }
 
 type CarRentalResponse struct {
-	RentalUID string              `json:"rentalUid"`
-	Status    models.RentalStatus `json:"status"`
-	CarUID    string              `json:"carUid"`
-	DateFrom  string              `json:"dateFrom"`
-	DateTo    string              `json:"dateTo"`
-	Payment   CarRentalPayment    `json:"payment"`
+	RentalUID string              `json:"rentalUid,omitempty"`
+	Status    models.RentalStatus `json:"status,omitempty"`
+	CarUID    string              `json:"carUid,omitempty"`
+	DateFrom  string              `json:"dateFrom,omitempty"`
+	DateTo    string              `json:"dateTo,omitempty"`
+	Payment   CarRentalPayment    `json:"payment,omitempty"`
 }
 
 func NewRentalResponse(rental models.Rental, payment models.Payment) CarRentalResponse {
@@ -42,14 +42,14 @@ func NewRentalResponse(rental models.Rental, payment models.Payment) CarRentalRe
 }
 
 type CarDTO struct {
-	CarUID             string         `json:"carUid"`
-	Brand              string         `json:"brand"`
-	Model              string         `json:"model"`
-	RegistrationNumber string         `json:"registrationNumber"`
-	Power              uint64         `json:"power"`
-	Price              uint64         `json:"price"`
-	Type               models.CarType `json:"type"`
-	Availability       bool           `json:"available"`
+	CarUID             string         `json:"carUid,omitempty"`
+	Brand              string         `json:"brand,omitempty"`
+	Model              string         `json:"model,omitempty"`
+	RegistrationNumber string         `json:"registrationNumber,omitempty"`
+	Power              uint64         `json:"power,omitempty"`
+	Price              uint64         `json:"price,omitempty"`
+	Type               models.CarType `json:"type,omitempty"`
+	Availability       bool           `json:"available,omitempty"`
 }
 
 func NewCarsDTO(cars []models.Car, page, pageSize, totalCount uint64) map[string]any {
@@ -77,25 +77,25 @@ func NewCarsDTO(cars []models.Car, page, pageSize, totalCount uint64) map[string
 }
 
 type RentalCarDTO struct {
-	CarUID             string `json:"carUid"`
-	Brand              string `json:"brand"`
-	Model              string `json:"model"`
-	RegistrationNumber string `json:"registrationNumber"`
+	CarUID             string `json:"carUid,omitempty"`
+	Brand              string `json:"brand,omitempty"`
+	Model              string `json:"model,omitempty"`
+	RegistrationNumber string `json:"registrationNumber,omitempty"`
 }
 
 type RentalPayment struct {
-	PaymentUID string               `json:"paymentUid"`
-	Status     models.PaymentStatus `json:"status"`
-	Price      uint64               `json:"price"`
+	PaymentUID string               `json:"paymentUid,omitempty"`
+	Status     models.PaymentStatus `json:"status,omitempty"`
+	Price      uint64               `json:"price,omitempty"`
 }
 
 type RentalDTO struct {
-	RentalUID string              `json:"rentalUid"`
-	DateFrom  string              `json:"dateFrom"`
-	DateTo    string              `json:"dateTo"`
-	Status    models.RentalStatus `json:"status"`
-	Car       RentalCarDTO        `json:"car"`
-	Payment   RentalPayment       `json:"payment"`
+	RentalUID string              `json:"rentalUid,omitempty"`
+	DateFrom  string              `json:"dateFrom,omitempty"`
+	DateTo    string              `json:"dateTo,omitempty"`
+	Status    models.RentalStatus `json:"status,omitempty"`
+	Car       RentalCarDTO        `json:"car,omitempty"`
+	Payment   RentalPayment       `json:"payment,omitempty"`
 }
 
 func NewRentalDTO(rental models.Rental, car models.Car, payment models.Payment) RentalDTO {

@@ -8,7 +8,9 @@ import (
 	paymentAPI "github.com/Inspirate789/ds-lab2/internal/payment/api"
 	"github.com/Inspirate789/ds-lab2/internal/pkg/app"
 	rentalAPI "github.com/Inspirate789/ds-lab2/internal/rental/api"
+	"github.com/Inspirate789/ds-lab2/pkg/retryer"
 	"github.com/lmittmann/tint"
+	"github.com/segmentio/kafka-go"
 	"github.com/spf13/pflag"
 	"log/slog"
 	"net/http"
@@ -64,10 +66,20 @@ func main() {
 
 	logger := slog.New(tint.NewHandler(os.Stdout, &tint.Options{Level: slog.Level(config.Logging.Level)}))
 
+	kafkaWriter := &kafka.Writer{
+		Addr:                   kafka.TCP(config.Kafka.Addresses...),
+		Topic:                  config.Kafka.Topic,
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
+	}
+	defer kafkaWriter.Close()
+
+	requestBacklog := retryer.NewKafkaRequestBacklog(nil, kafkaWriter, logger)
+
 	delivery := gateway.New(
-		carAPI.New(config.CarsApiAddr, http.DefaultClient, config.MaxRequestFails, logger),
-		rentalAPI.New(config.RentalApiAddr, http.DefaultClient, config.MaxRequestFails, logger),
-		paymentAPI.New(config.PaymentApiAddr, http.DefaultClient, config.MaxRequestFails, logger),
+		carAPI.New(config.CarsApiAddr, http.DefaultClient, requestBacklog, config.MaxRequestFails, logger),
+		rentalAPI.New(config.RentalApiAddr, http.DefaultClient, requestBacklog, config.MaxRequestFails, logger),
+		paymentAPI.New(config.PaymentApiAddr, http.DefaultClient, requestBacklog, config.MaxRequestFails, logger),
 		logger,
 	)
 	webApp := app.NewFiberApp(config.Web, delivery, logger)

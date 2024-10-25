@@ -181,7 +181,8 @@ jobs:
   shutdown:
     name: Shutdown test environment
     runs-on: ubuntu-latest
-    if: always()
+    needs: [ run_app, api_test, autograding ]
+    if: ${{ always() && contains(join(needs.*.result, ','), 'success') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

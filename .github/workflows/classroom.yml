@@ -144,33 +144,23 @@ jobs:
 
       - name: Cat gateway logs
         if: failure()
-        timeout-minutes: 10
-        run: |
-          docker logs gateway 
+        run: docker logs gateway
 
       - name: Cat retryer logs
         if: failure()
-        timeout-minutes: 10
-        run: |
-          docker logs retryer 
+        run: docker logs retryer
 
       - name: Cat cars-api logs
         if: failure()
-        timeout-minutes: 10
-        run: |
-          docker logs cars-api 
+        run: docker logs cars-api
 
       - name: Cat rental-api logs
         if: failure()
-        timeout-minutes: 10
-        run: |
-          docker logs rental-api 
+        run: docker logs rental-api
 
       - name: Cat payment-api logs
         if: failure()
-        timeout-minutes: 10
-        run: |
-          docker logs payment-api
+        run: docker logs payment-api
 
       - name: Shutdown test environment
         if: always()
